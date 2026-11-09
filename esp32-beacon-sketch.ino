@@ -2,11 +2,17 @@
 #include <WebServer.h>
 #include <esp_wifi.h>
 #include <DNSServer.h>
+#include <nvs_flash.h>
 
 // ---------- CONFIGURATION ----------
 const char* AP_SSID = "ESP32_Beacon_Flood";             
 const char* AP_PASS = "12345678";      
 #define LED_PIN 1
+
+// ---------- GPIO0 FACTORY RESET ----------
+#define BTN_PIN        0
+#define HOLD_MS        5000
+#define DEBOUNCE_MS    50
 
 // ---------- RUNTIME STATE ----------
 WebServer server(80);
@@ -27,6 +33,13 @@ uint8_t packet[128] = {
   0x64, 0x00, 0x01, 0x04,
   0x00, 0x00
 };
+
+// ---------- GPIO0 BUTTON STATE ----------
+static bool     btnStable       = true;
+static bool     btnLastRead     = true;
+static uint32_t btnLastChange   = 0;
+static uint32_t btnPressStart   = 0;
+static bool     btnHolding      = false;
 
 // ---------- HTML PORTAL ----------
 const char PORTAL_HTML[] PROGMEM = R"rawliteral(
@@ -180,11 +193,50 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
+// ---------- GPIO0 FACTORY RESET WORKER ----------
+void performFactoryReset() {
+  broadcasting = false;
+  digitalWrite(LED_PIN, LOW);
+  delay(50);
+  dnsServer.stop();
+  server.stop();
+  WiFi.softAPdisconnect(true);
+  WiFi.disconnect(true);
+  nvs_flash_erase();
+  nvs_flash_init();
+  esp_restart();
+}
+
+void pollFactoryButton() {
+  bool raw = digitalRead(BTN_PIN);
+  uint32_t now = millis();
+  if (raw != btnLastRead) {
+    btnLastRead   = raw;
+    btnLastChange = now;
+    return;
+  }
+  if ((now - btnLastChange) < DEBOUNCE_MS) return;
+  if (raw == btnStable) return;
+  btnStable = raw;
+  if (btnStable == LOW) {
+    btnPressStart = now;
+    btnHolding     = true;
+  } else {
+    btnHolding = false;
+  }
+  if (btnHolding && (now - btnPressStart) >= HOLD_MS) {
+    btnHolding = false;
+    performFactoryReset();
+  }
+}
+
 // ---------- BROADCAST WORKER ----------
 void broadcastPackets() {
   if (!broadcasting) return;
   if (totalWifi <= 0) totalWifi = 1;
   for (uint16_t a = 0; a < totalWifi && broadcasting; a++) {
+    pollFactoryButton();
+    if (!broadcasting) break;
     packet[10] = packet[16] = (random(256) & 0xFE) | 0x02;
     packet[11] = packet[17] = random(256);
     char ssidBuffer[32];
@@ -279,6 +331,11 @@ void handleTemp() {
 void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);  
+  pinMode(BTN_PIN, INPUT_PULLUP);
+  delay(100);
+  btnLastRead   = digitalRead(BTN_PIN);
+  btnStable     = btnLastRead;
+  btnLastChange = millis();
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID, AP_PASS);  
   esp_wifi_set_channel(wifiChannel, WIFI_SECOND_CHAN_NONE);
@@ -295,6 +352,7 @@ void setup() {
 }
 
 void loop() {
+  pollFactoryButton();
   dnsServer.processNextRequest();
   server.handleClient();
   if (broadcasting) {
