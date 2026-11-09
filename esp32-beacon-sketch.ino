@@ -6,7 +6,7 @@
 // ---------- CONFIGURATION ----------
 const char* AP_SSID = "ESP32_Beacon_Flood";             
 const char* AP_PASS = "12345678";      
-#define LED_PIN 2
+#define LED_PIN 1
 
 // ---------- RUNTIME STATE ----------
 WebServer server(80);
