@@ -14,7 +14,7 @@
 4. **Upload** the sketch (→ button).
 
 5. or download the firmware and flash
-   - 
+   - https://github.com/xiv3r/esp32-beacon-flood/raw/refs/heads/main/esp32-beacon-0x0.bin
 
 ## How to Use
 
